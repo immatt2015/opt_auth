@@ -1,15 +1,12 @@
 local otp = require "otp"
 local json = require "cjson"
 local jwt = require "resty.jwt"
-local auth = ngx.var.cookie_auth
 
-local jwtCache = ngx.shared.jwt
+local exports = {
+    version = "1.0.1" -- 让 opm 自动识别入口文件和版本号
+}
 
-local jwt_key = ngx.var.jwt_key
-if jwt_key == nil then
-    return ngx.exit(500)
-end
-local function req_auth(origin_uri, tip)
+function exports.req_auth(origin_uri, tip)
     if origin_uri == nil then
         origin_uri = "/"
     end
@@ -40,72 +37,87 @@ local function req_auth(origin_uri, tip)
     )
 end
 
-local function remove_auth()
+function exports.remove_auth()
     ngx.header["Set-Cookie"] = "auth=;path=/"
 end
 
-local headers = ngx.req.get_headers()
-local ip = headers["X-REAL-IP"] or headers["X_FORWARDED_FOR"] or ngx.var.remote_addr
-local user_agent = headers["user-agent"]
-local origin_uri = ngx.var.request_uri
-if ip == nil then
-    ngx.exit(505)
-end
+function exports.do_auth()
+    local auth = ngx.var.cookie_auth
+    local jwt_key = ngx.var.jwt_key
+    local jwtCache = ngx.shared.jwt
 
-if auth ~= nil and auth ~= "" then
-    local jwt_payload = jwt:verify(jwt_key, auth)
-    if jwt_payload.verified == true then
-    end
-    if jwt_payload.verified == false or jwt_payload.payload.ip ~= ip or jwtCache:get(jwt_payload.payload.user) == nil then
-        remove_auth()
-
-        req_auth(origin_uri, "登陆过期")
-        return
+    if jwt_key == nil then
+        return ngx.exit(500)
     end
 
-    return
-end
-
-ngx.req.read_body()
-local body_params = ngx.req.get_post_args()
-if body_params ~= nil then
-    local userInfo
-    if body_params["user"] ~= nil and jwtCache:get(body_params["user"]) ~= nil then
-        userInfo = json.decode(jwtCache:get(body_params["user"]))
+    local headers = ngx.req.get_headers()
+    local ip = headers["X-REAL-IP"] or headers["X_FORWARDED_FOR"] or ngx.var.remote_addr
+    local user_agent = headers["user-agent"]
+    local origin_uri = ngx.var.request_uri
+    if ip == nil then
+        ngx.exit(505)
     end
-    if
-        body_params["user"] == nil or body_params["passwd"] == nil or body_params["code"] == nil or userInfo == nil or
-            ngx.md5(body_params["passwd"]) ~= userInfo.passwd
-     then
-        local tip = ""
-        if body_params["user"] ~= nil then
-            tip = "鉴权失败!"
+
+    if auth ~= nil and auth ~= "" then
+        local jwt_payload = jwt:verify(jwt_key, auth)
+        if jwt_payload.verified == true then
         end
-        return req_auth(origin_uri, tip)
-    end
+        if
+            jwt_payload.verified == false or jwt_payload.payload.ip ~= ip or
+                jwtCache:get(jwt_payload.payload.user) == nil
+         then
+            remove_auth()
 
-    local user = body_params["user"]
+            req_auth(origin_uri, "登陆过期")
+            return
+        end
 
-    local OTP = otp.totp_init(userInfo["totp_key"])
-
-    -- local url = OTP:get_qr_url("OpenResty-TOTP", userInfo['totp_key'])
-
-    if OTP:verify_token(body_params["code"]) == true then
-        ngx.header["Set-Cookie"] =
-            "auth=" ..
-            jwt:sign(
-                jwt_key,
-                {
-                    header = {typ = "JWT", alg = "HS256"},
-                    payload = {
-                        role = userInfo.role,
-                        ip = ip,
-                        user = body_params["user"],
-                        sec = ngx.md5(table.concat({ip, "-", user_agent}))
-                    }
-                }
-            )
         return
     end
+
+    ngx.req.read_body()
+    local body_params = ngx.req.get_post_args()
+    if body_params ~= nil then
+        local userInfo
+        if body_params["user"] ~= nil and jwtCache:get(body_params["user"]) ~= nil then
+            userInfo = json.decode(jwtCache:get(body_params["user"]))
+        end
+        if
+            body_params["user"] == nil or body_params["passwd"] == nil or body_params["code"] == nil or userInfo == nil or
+                ngx.md5(body_params["passwd"]) ~= userInfo.passwd
+         then
+            local tip = ""
+            if body_params["user"] ~= nil then
+                tip = "鉴权失败!"
+            end
+            return req_auth(origin_uri, tip)
+        end
+
+        local user = body_params["user"]
+
+        local OTP = otp.totp_init(userInfo["totp_key"])
+
+        -- local url = OTP:get_qr_url("OpenResty-TOTP", userInfo['totp_key'])
+
+        if OTP:verify_token(body_params["code"]) == true then
+            ngx.header["Set-Cookie"] =
+                "auth=" ..
+                jwt:sign(
+                    jwt_key,
+                    {
+                        header = {typ = "JWT", alg = "HS256"},
+                        payload = {
+                            role = userInfo.role,
+                            ip = ip,
+                            user = body_params["user"],
+                            sec = ngx.md5(table.concat({ip, "-", user_agent}))
+                        }
+                    }
+                )
+            return
+        end
+    end
+    ngx.exit(401)
 end
-ngx.exit(401)
+
+return exports

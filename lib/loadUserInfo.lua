@@ -1,8 +1,8 @@
 local json = require "cjson"
-local jwtCache = ngx.shared.jwt
-if jwtCache == nil then
-    return
-end
+
+local exports = {
+    version = "1.0.0" -- 让 opm 自动识别入口文件和版本号
+}
 
 local function file_load(filename)
     local file
@@ -29,6 +29,11 @@ local function file_load(filename)
 end
 
 local function reloadUidInfo()
+    local jwtCache = ngx.shared.jwt
+    if jwtCache == nil then
+        return
+    end
+
     if ngx.var.user_info_path == nil then
         return
     end
@@ -45,6 +50,9 @@ local function reloadUidInfo()
     end
 end
 
-reloadUidInfo()
+function exports.reload()
+    reloadUidInfo()
+    ngx.timer.every(10, reloadUidInfo)
+end
 
-ngx.timer.every(10, reloadUidInfo)
+return exports
