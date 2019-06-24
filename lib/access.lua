@@ -68,7 +68,7 @@ function exports.do_auth()
          then
             remove_auth()
 
-            req_auth(origin_uri, "登陆过期")
+            exports.req_auth(origin_uri, "登陆过期")
             return
         end
 
@@ -90,7 +90,7 @@ function exports.do_auth()
             if body_params["user"] ~= nil then
                 tip = "鉴权失败!"
             end
-            return req_auth(origin_uri, tip)
+            return exports.req_auth(origin_uri, tip)
         end
 
         local user = body_params["user"]
