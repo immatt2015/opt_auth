@@ -2,9 +2,7 @@ local otp = require "otp"
 local json = require "cjson"
 local jwt = require "resty.jwt"
 
-local exports = {
-    version = "1.0.1" -- 让 opm 自动识别入口文件和版本号
-}
+local exports = {}
 
 function exports.req_auth(origin_uri, tip)
     if origin_uri == nil then
@@ -13,8 +11,8 @@ function exports.req_auth(origin_uri, tip)
     if tip == nil then
         tip = ""
     end
-    ngx.say(
-        200,
+    return {
+        false,
         table.concat(
             {
                 "<html>",
@@ -34,20 +32,19 @@ function exports.req_auth(origin_uri, tip)
                 "</body></html>"
             }
         )
-    )
+    }
 end
 
 function exports.remove_auth()
     ngx.header["Set-Cookie"] = "auth=;path=/"
 end
 
-function exports.do_auth()
+function exports.do_auth(jwt_key)
     local auth = ngx.var.cookie_auth
-    local jwt_key = ngx.var.jwt_key
     local jwtCache = ngx.shared.jwt
 
     if jwt_key == nil then
-        return ngx.exit(500)
+        ngx.exit(511)
     end
 
     local headers = ngx.req.get_headers()
@@ -60,19 +57,16 @@ function exports.do_auth()
 
     if auth ~= nil and auth ~= "" then
         local jwt_payload = jwt:verify(jwt_key, auth)
-        if jwt_payload.verified == true then
-        end
         if
-            jwt_payload.verified == false or jwt_payload.payload.ip ~= ip or
-                jwtCache:get(jwt_payload.payload.user) == nil
+            jwt_payload.verified == true and jwt_payload.payload.ip == ip or
+                jwtCache:get(jwt_payload.payload.user) ~= nil
          then
+            return {true}
+        else
             remove_auth()
 
-            exports.req_auth(origin_uri, "登陆过期")
-            return
+            return exports.req_auth(origin_uri, "登陆过期")
         end
-
-        return
     end
 
     ngx.req.read_body()
@@ -114,10 +108,56 @@ function exports.do_auth()
                         }
                     }
                 )
-            return
+            return {true}
         end
     end
-    ngx.exit(401)
+    return {false}
+end
+
+local function file_load(filename)
+    local file
+    if filename == nil then
+        file = io.stdin
+    else
+        local err
+        file, err = io.open(filename, "rb")
+        if file == nil then
+            error(("Unable to read '%s': %s"):format(filename, err))
+        end
+    end
+    local data = file:read("*a")
+
+    if filename ~= nil then
+        file:close()
+    end
+
+    if data == nil then
+        error("Failed to read " .. filename)
+    end
+
+    return data
+end
+
+function exports.reload_user_info(premature, user_info_path)
+    local jwtCache = ngx.shared.jwt
+    if jwtCache == nil then
+        return
+    end
+
+    if user_info_path == nil then
+        return
+    end
+    local json_text = file_load(user_info_path)
+    if json_text == nil then
+        return
+    end
+    local t = json.decode(json_text)
+
+    jwtCache:flush_all()
+
+    for uid, content in pairs(t) do
+        jwtCache:set(uid, json.encode(content))
+    end
 end
 
 return exports
