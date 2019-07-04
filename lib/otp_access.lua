@@ -11,8 +11,7 @@ function exports.req_auth(origin_uri, tip)
     if tip == nil then
         tip = ""
     end
-    return {
-        false,
+    ngx.say(
         table.concat(
             {
                 "<html>",
@@ -32,7 +31,8 @@ function exports.req_auth(origin_uri, tip)
                 "</body></html>"
             }
         )
-    }
+    )
+    return ngx.exit(200)
 end
 
 function exports.remove_auth()
@@ -44,7 +44,7 @@ function exports.do_auth(jwt_key)
     local jwtCache = ngx.shared.jwt
 
     if jwt_key == nil then
-        ngx.exit(511)
+        return ngx.exit(511)
     end
 
     local headers = ngx.req.get_headers()
@@ -52,7 +52,7 @@ function exports.do_auth(jwt_key)
     local user_agent = headers["user-agent"]
     local origin_uri = ngx.var.request_uri
     if ip == nil then
-        ngx.exit(505)
+        return ngx.exit(505)
     end
 
     if auth ~= nil and auth ~= "" then
@@ -61,9 +61,9 @@ function exports.do_auth(jwt_key)
             jwt_payload.verified == true and jwt_payload.payload.ip == ip or
                 jwtCache:get(jwt_payload.payload.user) ~= nil
          then
-            return {true}
+            return ngx.exit(0)
         else
-            remove_auth()
+            exports.remove_auth()
 
             return exports.req_auth(origin_uri, "登陆过期")
         end
@@ -76,13 +76,30 @@ function exports.do_auth(jwt_key)
         if body_params["user"] ~= nil and jwtCache:get(body_params["user"]) ~= nil then
             userInfo = json.decode(jwtCache:get(body_params["user"]))
         end
-        if
-            body_params["user"] == nil or body_params["passwd"] == nil or body_params["code"] == nil or userInfo == nil or
-                ngx.md5(body_params["passwd"]) ~= userInfo.passwd
-         then
+
+        if body_params["user"] == nil then
+            local tip = "user is null! "
+            return exports.req_auth(origin_uri, tip)
+        end
+        if body_params["passwd"] == nil then
+            local tip = "password is null!"
+            return exports.req_auth(origin_uri, tip)
+        end
+        if body_params["code"] == nil then
+            local tip = "code is null"
+            return exports.req_auth(origin_uri, tip)
+        end
+        if userInfo == nil then
+            local tip = "user is null! "
+            if body_params["user"] ~= nil then
+                tip = body_params["user"] .. "鉴权失败!"
+            end
+            return exports.req_auth(origin_uri, tip)
+        end
+        if ngx.md5(body_params["passwd"]) ~= userInfo.passwd then
             local tip = ""
             if body_params["user"] ~= nil then
-                tip = "鉴权失败!"
+                tip = "用户错误!"
             end
             return exports.req_auth(origin_uri, tip)
         end
@@ -108,10 +125,10 @@ function exports.do_auth(jwt_key)
                         }
                     }
                 )
-            return {true}
+            return ngx.exit(0)
         end
     end
-    return {false}
+    return ngx.exit(501)
 end
 
 local function file_load(filename)
